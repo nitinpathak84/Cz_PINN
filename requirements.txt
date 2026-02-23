@@ -1,3 +1,2 @@
-nvidia-physicsnemo
 hydra-core
 torch
