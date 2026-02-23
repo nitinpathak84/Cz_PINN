@@ -1,64 +1,67 @@
 # src/losses.py
 import torch
+from src.residuals import axisym_laplace_residual
+from src.bcs import dirichlet_T_loss, axis_symmetry_loss
 
 
-def axisym_laplace_residual(model, coords, r_eps: float):
-    """
-    Compute axisymmetric Laplace residual:
-        R = T_rr + (1/r) T_r + T_zz
-    coords: [N,2] with columns [r,z] (but coming from x,y)
-    """
-    r = coords[:, 0:1].clone().detach().requires_grad_(True)
-    z = coords[:, 1:2].clone().detach().requires_grad_(True)
+def pde_loss(model, interior_batch, r_eps: float):
+    r = interior_batch["x"].reshape(-1, 1)
+    z = interior_batch["y"].reshape(-1, 1)
+    sdf = interior_batch["sdf"].reshape(-1, 1)
 
-    T = model(torch.cat([r, z], dim=1))  # [N,1]
-
-    # First derivatives
-    Tr = torch.autograd.grad(
-        T, r, grad_outputs=torch.ones_like(T), create_graph=True, retain_graph=True
-    )[0]
-    Tz = torch.autograd.grad(
-        T, z, grad_outputs=torch.ones_like(T), create_graph=True, retain_graph=True
-    )[0]
-
-    # Second derivatives
-    Trr = torch.autograd.grad(
-        Tr, r, grad_outputs=torch.ones_like(Tr), create_graph=True, retain_graph=True
-    )[0]
-    Tzz = torch.autograd.grad(
-        Tz, z, grad_outputs=torch.ones_like(Tz), create_graph=True, retain_graph=True
-    )[0]
-
-    r_safe = torch.clamp(r, min=r_eps)
-    res = Trr + (1.0 / r_safe) * Tr + Tzz
-    return res, Tr, T
-
-
-def pde_loss(model, interior, r_eps: float):
-    """
-    interior: dict with keys x,y,sdf from GeometryDatapipe
-      x->r, y->z
-    """
-    r = interior["x"].reshape(-1, 1)
-    z = interior["y"].reshape(-1, 1)
-    sdf = interior.get("sdf", None)
     coords = torch.cat([r, z], dim=1)
-
     res, _, _ = axisym_laplace_residual(model, coords, r_eps=r_eps)
 
-    if sdf is not None:
-        # same pattern as LDC: weight by sdf so boundary regions don't dominate
-        res = res * sdf.reshape(-1, 1)
-
+    # weight by sdf like in the LDC example
+    res = res * sdf
     return torch.mean(res**2)
 
 
-def dirichlet_bc_loss(model, bc_coords, target_T: float):
-    """Mean squared error enforcing T = target_T on boundary coords."""
-    T = model(bc_coords)
-    return torch.mean((T - target_T) ** 2)
+def total_loss(model, batches, cfg):
+    """
+    batches dict must contain:
+      mi: melt interior batch (x,y,sdf)
+      ci: crystal interior batch (x,y,sdf)
+      hb: heater boundary batch (x,y)
+      cb: cooling boundary batch (x,y)
+      ab: axis boundary batch (x,y)
+    """
+    mi = batches["mi"]
+    ci = batches["ci"]
+    hb = batches["hb"]
+    cb = batches["cb"]
+    ab = batches["ab"]
 
+    r_eps = cfg.physics.r_eps
 
-def axis_symmetry_loss(Tr_on_axis):
-    """Enforce dT/dr = 0 on axis points."""
-    return torch.mean(Tr_on_axis**2)
+    # PDE losses
+    loss_pde_m = pde_loss(model, mi, r_eps=r_eps)
+    loss_pde_c = pde_loss(model, ci, r_eps=r_eps)
+
+    # Boundary losses (Dirichlet heater/cool)
+    heat_coords = torch.cat([hb["x"].reshape(-1, 1), hb["y"].reshape(-1, 1)], dim=1)
+    cool_coords = torch.cat([cb["x"].reshape(-1, 1), cb["y"].reshape(-1, 1)], dim=1)
+    axis_coords = torch.cat([ab["x"].reshape(-1, 1), ab["y"].reshape(-1, 1)], dim=1)
+
+    loss_heat = dirichlet_T_loss(model, heat_coords, cfg.physics.T_hot)
+    loss_cool = dirichlet_T_loss(model, cool_coords, cfg.physics.T_cold)
+    loss_axis = axis_symmetry_loss(model, axis_coords, r_eps=r_eps)
+
+    # Weighted sum
+    L = (
+        cfg.training.w_pde_melt * loss_pde_m
+        + cfg.training.w_pde_crystal * loss_pde_c
+        + cfg.training.w_bc_heat * loss_heat
+        + cfg.training.w_bc_cool * loss_cool
+        + cfg.training.w_bc_axis * loss_axis
+    )
+
+    details = {
+        "loss_total": L,
+        "loss_pde_melt": loss_pde_m.detach(),
+        "loss_pde_crystal": loss_pde_c.detach(),
+        "loss_bc_heat": loss_heat.detach(),
+        "loss_bc_cool": loss_cool.detach(),
+        "loss_bc_axis": loss_axis.detach(),
+    }
+    return L, details
