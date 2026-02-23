@@ -1,9 +1,9 @@
-# conf/config.yaml
 run:
   seed: 42
   steps: 20000
   plot_every: 1000
   out_dir: "./outputs"
+  device: "cuda"        # "cuda" or "cpu"
 
 geometry:
   # melt + crystal scaffold (meters)
@@ -12,37 +12,52 @@ geometry:
   R_c: 0.150
   H_s: 0.300
 
-  # outer box for BC sampling (meters)
+  # outer extent for inference plots
   R_w: 0.450
   z_top: 0.650
 
-  # virtual heater boundary segment (r = R_h)
+  # heater boundary segment
   R_h: 0.320
   z_h1: 0.040
   z_h2: 0.420
 
-  # virtual cooling boundary segment (r = R_w)
+  # cooling boundary segment (at r=R_w)
   z_w1: 0.000
   z_w2: 0.600
 
+  # thickness used to create "thin rectangles" for boundary sampling
+  bc_thickness: 1.0e-4  # meters
+
 physics:
-  # V1 uses Dirichlet BCs (easy to get a non-trivial solution)
-  T_hot: 1600.0   # K (example)
-  T_cold: 320.0   # K (example)
-  # avoid r=0 singularity in Laplacian by clamping r
+  # V1 uses Dirichlet BCs (easy to make problem well-posed)
+  T_hot: 1600.0   # K
+  T_cold: 320.0   # K
+
+  # axisymmetric Laplacian has 1/r term - clamp r below this
   r_eps: 1.0e-4
 
 training:
   lr: 1.0e-3
-  lr_decay: 0.9999871767586216  # same decay style as your LDC example
-  interior_points_melt: 6000
-  interior_points_crystal: 6000
-  bc_points: 6000
+  lr_decay: 0.9999871767586216
+
+  # sampling sizes
+  n_int_melt: 6000
+  n_int_crystal: 6000
+  n_bc_heat: 3000
+  n_bc_cool: 3000
+  n_bc_axis: 3000
+
+  # loss weights
+  w_pde_melt: 1.0
+  w_pde_crystal: 1.0
+  w_bc_heat: 10.0
+  w_bc_cool: 10.0
+  w_bc_axis: 1.0
 
 model:
   num_layers: 6
   layer_size: 512
 
 inference:
-  nx: 512
+  nr: 512
   nz: 512
