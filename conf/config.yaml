@@ -1,0 +1,48 @@
+# conf/config.yaml
+run:
+  seed: 42
+  steps: 20000
+  plot_every: 1000
+  out_dir: "./outputs"
+
+geometry:
+  # melt + crystal scaffold (meters)
+  R_cr: 0.220
+  h_m: 0.180
+  R_c: 0.150
+  H_s: 0.300
+
+  # outer box for BC sampling (meters)
+  R_w: 0.450
+  z_top: 0.650
+
+  # virtual heater boundary segment (r = R_h)
+  R_h: 0.320
+  z_h1: 0.040
+  z_h2: 0.420
+
+  # virtual cooling boundary segment (r = R_w)
+  z_w1: 0.000
+  z_w2: 0.600
+
+physics:
+  # V1 uses Dirichlet BCs (easy to get a non-trivial solution)
+  T_hot: 1600.0   # K (example)
+  T_cold: 320.0   # K (example)
+  # avoid r=0 singularity in Laplacian by clamping r
+  r_eps: 1.0e-4
+
+training:
+  lr: 1.0e-3
+  lr_decay: 0.9999871767586216  # same decay style as your LDC example
+  interior_points_melt: 6000
+  interior_points_crystal: 6000
+  bc_points: 6000
+
+model:
+  num_layers: 6
+  layer_size: 512
+
+inference:
+  nx: 512
+  nz: 512
