@@ -4,54 +4,63 @@ from physicsnemo.sym.geometry.primitives_2d import Rectangle
 
 
 @dataclass
-class CzGeom:
+class CzGeomParams:
     # melt + crystal
     R_cr: float
     h_m: float
     R_c: float
     H_s: float
 
-    # outer box (for boundary sampling)
+    # overall extents
     R_w: float
     z_top: float
 
-    # heater line
+    # heater segment
     R_h: float
     z_h1: float
     z_h2: float
 
-    # cooling line (at r = R_w)
+    # cooling segment (r=R_w)
     z_w1: float
     z_w2: float
 
-
-def build_geometries(g: CzGeom):
-    """Return geometry objects used for sampling."""
-    melt = Rectangle((0.0, 0.0), (g.R_cr, g.h_m))
-    crystal = Rectangle((0.0, g.h_m), (g.R_c, g.h_m + g.H_s))
-    # Outer box used only for sampling boundary points (axis, heater, cooling)
-    box = Rectangle((0.0, 0.0), (g.R_w, g.z_top))
-    return melt, crystal, box
+    # thin boundary thickness
+    bc_thickness: float
 
 
-def boundary_masks(x, y, g: CzGeom, tol: float = 1e-6):
+@dataclass
+class CzGeometries:
+    melt: Rectangle
+    crystal: Rectangle
+    heater_band: Rectangle
+    cool_band: Rectangle
+    axis_band: Rectangle
+
+
+def build_geometries(p: CzGeomParams) -> CzGeometries:
     """
-    Given surface-sampled points (x,y) from the outer box, return boolean masks
-    for the boundary segments we care about.
-
-    We keep variable names x,y because GeometryDatapipe returns x,y.
-    Interpret x -> r and y -> z.
+    Build computational domains + separate thin rectangles for BC sampling.
+    Use x->r and y->z interpretation, but keep coordinate names x,y for datapipe.
     """
-    r = x
-    z = y
+    # Interior domains
+    melt = Rectangle((0.0, 0.0), (p.R_cr, p.h_m))
+    crystal = Rectangle((0.0, p.h_m), (p.R_c, p.h_m + p.H_s))
 
-    # Axis: r ~ 0
-    axis = r <= tol
+    eps = p.bc_thickness
 
-    # Cooling wall: r ~ R_w and z within [z_w1, z_w2]
-    cool = (abs(r - g.R_w) <= tol) & (z >= g.z_w1 - tol) & (z <= g.z_w2 + tol)
+    # Heater boundary: thin rectangle around r=R_h, z in [z_h1,z_h2]
+    heater_band = Rectangle((p.R_h - eps, p.z_h1), (p.R_h + eps, p.z_h2))
 
-    # Heater line: r ~ R_h and z within [z_h1, z_h2]
-    heat = (abs(r - g.R_h) <= tol) & (z >= g.z_h1 - tol) & (z <= g.z_h2 + tol)
+    # Cooling boundary: thin rectangle around r=R_w, z in [z_w1,z_w2]
+    cool_band = Rectangle((p.R_w - eps, p.z_w1), (p.R_w + eps, p.z_w2))
 
-    return axis, heat, cool
+    # Axis boundary: thin rectangle around r=0 over full z
+    axis_band = Rectangle((0.0, 0.0), (eps, p.z_top))
+
+    return CzGeometries(
+        melt=melt,
+        crystal=crystal,
+        heater_band=heater_band,
+        cool_band=cool_band,
+        axis_band=axis_band,
+    )
